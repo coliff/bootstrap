@@ -4998,9 +4998,15 @@ class DialogBase extends BaseComponent {
     }
     this._isTransitioning = true;
     this._hideElement();
-    this._onAfterHide();
     this._queueCallback(() => {
+      // For subclasses that defer close() until the exit transition ends
+      // (so the dialog stays in the top layer with its ::backdrop), close()
+      // happens here instead of in _hideElement().
+      if (this._element.open) {
+        this._closeAndCleanup();
+      }
       this._element.classList.remove('hiding');
+      this._onAfterHide();
       this._isTransitioning = false;
       EventHandler.trigger(this._element, this.constructor.eventName('hidden'));
     }, this._element, this._isAnimated());
@@ -5056,6 +5062,20 @@ class DialogBase extends BaseComponent {
     // Without this, the navbar's `:not([open])` transition-kill rule
     // would prevent the slide-out animation.
     this._element.classList.add('hiding');
+
+    // Subclasses can defer close() until after the exit transition by
+    // returning true from _shouldDeferClose(). This is needed for the
+    // native modal <dialog> centered case: close() removes the dialog
+    // from the top layer immediately, which strips its auto-centering
+    // and the ::backdrop, breaking the exit animation.
+    if (!this._shouldDeferClose()) {
+      this._closeAndCleanup();
+    }
+  }
+
+  // Closes the native <dialog> and tears down body-scroll prevention.
+  // Safe to call multiple times — close() is a no-op on a closed dialog.
+  _closeAndCleanup() {
     this._element.close();
     this._openedAsModal = false;
 
@@ -5063,6 +5083,13 @@ class DialogBase extends BaseComponent {
     if (!document.querySelector('dialog[open]:modal')) {
       document.body.classList.remove(CLASS_NAME_OPEN);
     }
+  }
+
+  // Hook: return true to keep the dialog in the top layer (i.e., delay
+  // calling close()) until the exit transition completes. The base class
+  // closes synchronously; Dialog overrides this for animated modal cases.
+  _shouldDeferClose() {
+    return false;
   }
   _triggerBackdropTransition() {
     const hidePreventedEvent = EventHandler.trigger(this._element, this.constructor.eventName('hidePrevented'));
@@ -5161,6 +5188,8 @@ const EVENT_HIDDEN$4 = `hidden${EVENT_KEY$9}`;
 const EVENT_CANCEL = `cancel${EVENT_KEY$9}`;
 const EVENT_CLICK_DATA_API$2 = `click${EVENT_KEY$9}${DATA_API_KEY$5}`;
 const CLASS_NAME_NONMODAL = 'dialog-nonmodal';
+const CLASS_NAME_INSTANT = 'dialog-instant';
+const CLASS_NAME_SWAP_IN = 'dialog-swap-in';
 const SELECTOR_DATA_TOGGLE$5 = '[data-bs-toggle="dialog"]';
 const Default$b = {
   backdrop: true,
@@ -5210,6 +5239,16 @@ class Dialog extends DialogBase {
   _onAfterHide() {
     this._element.classList.remove(CLASS_NAME_NONMODAL);
   }
+
+  // Keep the dialog in the top layer until the exit transition ends. This
+  // preserves the browser's modal centering and the native ::backdrop, both
+  // of which disappear synchronously the moment close() is called. Without
+  // this, the dialog would jump to the top of the page and the backdrop
+  // blur would vanish instantly while the dialog faded — making the exit
+  // animation appear to skip entirely.
+  _shouldDeferClose() {
+    return this._isAnimated();
+  }
   _onCancel() {
     EventHandler.trigger(this._element, EVENT_CANCEL);
   }
@@ -5242,10 +5281,36 @@ EventHandler.on(document, EVENT_CLICK_DATA_API$2, SELECTOR_DATA_TOGGLE$5, functi
   const currentDialog = this.closest('dialog[open]');
   const shouldSwap = currentDialog && currentDialog !== target;
   if (shouldSwap) {
+    // Swap strategy (seamless backdrop, no flash):
+    //   1. Mark the incoming dialog with .dialog-swap-in so its ::backdrop
+    //      skips the @starting-style fade-in and appears fully opaque on
+    //      its very first frame in the top layer.
+    //   2. Open the incoming dialog (showModal).
+    //   3. Close the outgoing dialog synchronously — no exit transition, no
+    //      .hiding — so its ::backdrop is removed in the same frame the
+    //      incoming dialog's backdrop appears. Since both backdrops render
+    //      the same color, the user sees one continuous backdrop. Two
+    //      simultaneously-visible backdrops would composite to ~75% darker,
+    //      and a fading-out + fading-in pair would dip to ~75% opacity —
+    //      either would look like a flash.
+    //   4. Clean up the .dialog-swap-in flag once the incoming dialog
+    //      finishes its entry transition.
     const newDialog = Dialog.getOrCreateInstance(target, config);
+    target.classList.add(CLASS_NAME_SWAP_IN);
     newDialog.show(this);
+    EventHandler.one(target, `shown${EVENT_KEY$9}`, () => {
+      target.classList.remove(CLASS_NAME_SWAP_IN);
+    });
     const currentInstance = Dialog.getInstance(currentDialog);
     if (currentInstance) {
+      // Force synchronous close: .dialog-instant makes _isAnimated() false,
+      // which makes _shouldDeferClose() false, so hide() calls close()
+      // immediately (no deferred .hiding path). The class is removed after
+      // the (now-synchronous) hidden event fires.
+      currentDialog.classList.add(CLASS_NAME_INSTANT);
+      EventHandler.one(currentDialog, EVENT_HIDDEN$4, () => {
+        currentDialog.classList.remove(CLASS_NAME_INSTANT);
+      });
       currentInstance.hide();
     }
     return;
@@ -5454,19 +5519,21 @@ class NavOverflow extends BaseComponent {
       return;
     }
     const overflowWidth = overflowItem?.offsetWidth || 0;
+
+    // Keep items are always visible; subtract their widths so the threshold
+    // reflects actual available space for non-keep items.
+    const keepWidth = this._items.filter(item => item.classList.contains(CLASS_NAME_KEEP)).reduce((sum, item) => sum + item.offsetWidth, 0);
     let usedWidth = 0;
     const itemsToOverflow = [];
-    const overflowThreshold = navWidth - overflowWidth - 10; // 10px buffer
+    const overflowThreshold = navWidth - overflowWidth - keepWidth - 10; // 10px buffer
 
     // Calculate which items need to overflow (skip items with keep class)
     for (const item of this._items) {
-      const itemWidth = item.offsetWidth;
-      usedWidth += itemWidth;
-
       // Never overflow items with the keep class
       if (item.classList.contains(CLASS_NAME_KEEP)) {
         continue;
       }
+      usedWidth += item.offsetWidth;
       if (usedWidth > overflowThreshold) {
         itemsToOverflow.push(item);
       }
