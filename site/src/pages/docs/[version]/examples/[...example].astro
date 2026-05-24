@@ -1,7 +1,7 @@
 ---
 import ExamplesLayout from '@layouts/ExamplesLayout.astro'
 import { getConfig } from '@libs/config'
-import { exampleFrontmatterSchema, getExampleNameFromPagePath, type ExampleFrontmatter } from '@libs/examples'
+import { exampleFrontmatterSchema, getExampleNameFromPagePath } from '@libs/examples'
 
 export async function getStaticPaths() {
   const examplesPageModules = import.meta.glob('../../../../assets/examples/**/*.astro', { eager: true })
@@ -13,26 +13,33 @@ export async function getStaticPaths() {
   })
 
   return examplesPages.map((examplesPage) => {
-    const { default: Content, file, url, ...props } = examplesPage
+    const { default: _Content, file, url, ...props } = examplesPage
     const example = getExampleNameFromPagePath(examplesPage.file)
-    let frontmatter: ExampleFrontmatter
 
     try {
-      frontmatter = exampleFrontmatterSchema.parse(props)
+      exampleFrontmatterSchema.parse(props)
     } catch (error) {
       throw new Error(`Invalid frontmatter for the '${example}' example.`, { cause: error })
     }
 
     return {
-      params: { example, version: getConfig().docs_version },
-      props: { ...frontmatter, Content }
+      params: { example, version: getConfig().docs_version }
     }
   })
 }
 
-type Props = ExampleFrontmatter
+const example = Astro.params.example!
+const examplesPageModules = import.meta.glob('../../../../assets/examples/**/*.astro')
+const modulePath = Object.keys(examplesPageModules).find((path) => getExampleNameFromPagePath(path) === example)
 
-const { Content, ...props } = Astro.props
+if (!modulePath) {
+  throw new Error(`Example module not found for '${example}'.`)
+}
+
+const exampleModule = examplesPageModules[modulePath]
+const { default: Content, url, ...moduleProps } =
+  typeof exampleModule === 'function' ? await exampleModule() : exampleModule
+const props = exampleFrontmatterSchema.parse(moduleProps)
 ---
 
 <ExamplesLayout {...props}>
