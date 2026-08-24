@@ -303,11 +303,54 @@ This also means you can override a container’s theme color with another theme 
     </div>
   </div>`} />
 
+### Reset
+
+Use `.theme-reset` on a nested container to stop inheriting those tokens. Theme-aware children then use their component defaults again.
+
+<Example code={`<div class="vstack gap-3 theme-primary"><!-- [!code highlight] -->
+    <div class="alert"><p>Primary alert</p></div>
+    <div>
+      <button type="button" class="btn-solid">Primary button</button>
+      <span class="badge">Primary badge</span>
+    </div>
+
+    <div class="theme-reset vstack gap-3"><!-- [!code highlight] -->
+      <div class="alert"><p>Default alert</p></div>
+      <div>
+        <button type="button" class="btn-solid">Default button</button>
+        <span class="badge">Default badge</span>
+      </div>
+    </div>
+  </div>`} />
+
+The class sets each `--theme-*` custom property to `initial`. That makes the property invalid, so `var(--theme-bg, fallback)` uses the fallback. Do not use `unset` here—`unset` inherits from the parent again.
+
 ## Theme Sass map
 
 We use a large, nested Sass map to generate our theme color values.
 
 <ScssDocs name="theme-colors" file="scss/_theme.scss" />
+
+### Customize the map
+
+Configure `$theme-colors` through the main entrypoint with `@use ... with ()`. Our `defaults()` function merges your map on top of the built-ins, so the standard themes stay intact and you add only what you need. The layer maps (`$theme-bgs`, `$theme-fgs`, and `$theme-borders`) work the same way.
+
+```scss
+@use "../node_modules/bootstrap/scss/bootstrap" with (
+  $theme-colors: (
+    // Add a new theme color
+    "brand": (
+      "base": var(--indigo-500),
+      "bg": var(--indigo-500),
+      "contrast": var(--white)
+    ),
+    // Remove a built-in theme color
+    "info": null
+  )
+);
+```
+
+Each theme color is a nested map, so the merge is one level deep. To change one sub-key of a built-in theme, pass the whole sub-map for that theme. For more detail, see the [Sass customization docs]([[docsref:/customize/sass#theme-color-map]]).
 
 ## CSS variables
 
