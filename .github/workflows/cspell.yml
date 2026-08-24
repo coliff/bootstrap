@@ -36,4 +36,4 @@ jobs:
             .gitignore
             **/*.{md,mdx,yml,yaml,json,js,cjs,mjs,ts}
           inline: error
-          incremental_files_only: false
+          incremental_files_only: true
